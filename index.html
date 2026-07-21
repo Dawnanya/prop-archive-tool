@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>道具压缩包整理工具</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <style>
+    body{margin:0;background:#f6f8fa;color:#1f2328;font:16px system-ui,-apple-system,"Microsoft YaHei",sans-serif}.wrap{max-width:760px;margin:48px auto;padding:0 20px}.panel{background:#fff;border:1px solid #d0d7de;border-radius:12px;padding:28px;box-shadow:0 2px 8px #1f23280d}h1{margin:0 0 8px;font-size:26px}p{line-height:1.6;color:#57606a}.field{margin:22px 0}.field label{display:block;font-weight:600;margin-bottom:8px}input,select,button{font:inherit}input,select{box-sizing:border-box;width:100%;padding:10px;border:1px solid #d0d7de;border-radius:6px;background:#fff}button{padding:10px 16px;border:0;border-radius:6px;background:#0969da;color:#fff;font-weight:600;cursor:pointer}button.secondary{background:#fff;color:#0969da;border:1px solid #d0d7de}.actions{display:flex;gap:12px;justify-content:flex-end;margin-top:26px}.hidden{display:none}.status{margin:16px 0;padding:12px;background:#ddf4ff;border-radius:6px}.error{background:#ffebe9;color:#cf222e}.log{width:100%;border-collapse:collapse;margin:16px 0}.log td{padding:10px;border-bottom:1px solid #d8dee4}.keep{color:#1a7f37}.remove{color:#cf222e}.note{font-size:14px}.footer{margin-top:18px;font-size:13px;color:#57606a}
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <section class="panel" id="step1">
+      <h1>道具压缩包整理工具</h1>
+      <p>上传 ZIP 文件并选择道具种类。工具会识别资源、清理多余文件、生成规范命名和 <code>meta.json</code>。</p>
+      <div class="field"><label for="zipFile">1. 上传 ZIP 文件</label><input id="zipFile" type="file" accept=".zip,application/zip"></div>
+      <div class="field"><label for="propType">2. 选择道具种类</label><select id="propType"></select></div>
+      <div id="message" class="status hidden"></div>
+      <div class="actions"><button id="process">处理并预览</button></div>
+    </section>
+    <section class="panel hidden" id="step2">
+      <h1>预览处理结果</h1>
+      <p id="summary"></p>
+      <table class="log"><tbody id="log"></tbody></table>
+      <div class="actions"><button class="secondary" id="back">返回修改</button><button id="download">下载整理后的 ZIP</button></div>
+    </section>
+    <p class="footer">所有文件仅在你的浏览器中处理，不会上传到服务器。</p>
+  </main>
+  <script>
+    const TYPES={
+      "双人头像框":{meta:{relative_x:.5,relative_y:.5,ratio_size:.5},slots:["self_frame","other_frame"],allow:["image"]},
+      "双人进场特效":{meta:{mode:"double",show_type:"11",relative_x:.5,relative_y:.5,ratio_size:.5},slots:["animated","p","self_frame","other_frame","peer_avatar"],allow:["image","video","json"]},
+      "普通图片礼物":{meta:{type:"normal"},slots:["effect","thumb"],allow:["image"]},
+      "普通爆屏礼物":{meta:{showType:"blast"},slots:["animated","p","thumb"],allow:["image","video","json"]},
+      "爆屏单人头像礼物":{meta:{type:"avatar",showType:"blast",avatarMode:"single"},slots:["animated","p","thumb"],allow:["image","video","json"]},
+      "爆屏双人头像礼物":{meta:{type:"avatar",showType:"blast",avatarMode:"double"},slots:["animated","p","thumb"],allow:["image","video","json"]}
+    };
+    const imageExt=["png","jpg","jpeg","webp"],videoExt=["mp4","vap"];
+    const typeSelect=document.getElementById("propType"),msg=document.getElementById("message");
+    Object.keys(TYPES).forEach(n=>typeSelect.add(new Option(n,n)));
+    let resultZip,resultName;
+    function kind(name){const ext=name.split(".").pop().toLowerCase();return imageExt.includes(ext)?"image":videoExt.includes(ext)?"video":ext==="json"?"json":"other"}
+    function ext(name){return "."+name.split(".").pop().toLowerCase()}
+    function suggested(name,k,used){const n=name.toLowerCase();if(k==="video")return used.has("animated"+ext(name))?null:"animated"+ext(name);if(k==="json")return used.has("p.json")?null:"p.json";if(/self|current/.test(n))return "self_frame"+ext(name);if(/other|peer|target/.test(n))return "other_frame"+ext(name);if(/avatar/.test(n))return "peer_avatar"+ext(name);if(/thumb|icon/.test(n))return "thumb"+ext(name);if(/effect|body/.test(n))return "effect"+ext(name);return null}
+    function showError(text){msg.textContent=text;msg.className="status error"}
+    document.getElementById("process").onclick=async()=>{
+      const file=document.getElementById("zipFile").files[0];if(!file)return showError("请先选择 ZIP 文件。");if(!window.JSZip)return showError("压缩包组件加载失败，请检查网络后重试。");
+      msg.className="status";msg.textContent="正在解压并整理…";
+      try{
+        const source=await JSZip.loadAsync(file),spec=TYPES[typeSelect.value],out=new JSZip(),used=new Set(),images=[],records=[];
+        for(const [path,item] of Object.entries(source.files)){
+          if(item.dir)continue;const base=path.split("/").pop(),k=kind(base);
+          if(base.toLowerCase()==="meta.json")continue;
+          if(!spec.allow.includes(k)){records.push(["删除",base,"不支持的格式"]);continue;}
+          let target=suggested(base,k,used);if(!target&&k==="image"){images.push({base,item});continue;}
+          if(!target||used.has(target)){records.push(["删除",base,"重复或无法识别"]);continue;}
+          out.file(`${typeSelect.value}/${target}`,await item.async("uint8array"));used.add(target);records.push(["保留",base,`重命名为 ${target}`]);
+        }
+        const imageSlots=spec.slots.filter(x=>!['animated','p'].includes(x));
+        images.forEach(({base,item},i)=>{const slot=imageSlots[i];if(!slot){records.push(["删除",base,"超出所需图片数量"]);return;}const target=slot+ext(base);if(used.has(target)){records.push(["删除",base,`${target} 已存在`]);return;}out.file(`${typeSelect.value}/${target}`,item.async("uint8array"));used.add(target);records.push(["保留",base,`重命名为 ${target}`]);});
+        out.file(`${typeSelect.value}/meta.json`,JSON.stringify(spec.meta,null,2));records.push(["生成","meta.json","写入道具配置"]);
+        resultZip=await out.generateAsync({type:"blob"});resultName=`${typeSelect.value}_已整理.zip`;
+        document.getElementById("summary").textContent=`道具种类：${typeSelect.value}；以下是文件处理记录。`;
+        const log=document.getElementById("log");log.innerHTML="";records.forEach(r=>{const tr=document.createElement("tr");tr.innerHTML=`<td class="${r[0]==='保留'||r[0]==='生成'?'keep':'remove'}">${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td>`;log.append(tr)});
+        document.getElementById("step1").classList.add("hidden");document.getElementById("step2").classList.remove("hidden");
+      }catch(e){showError("处理失败："+e.message)}
+    };
+    document.getElementById("back").onclick=()=>{document.getElementById("step2").classList.add("hidden");document.getElementById("step1").classList.remove("hidden");msg.className="status hidden"};
+    document.getElementById("download").onclick=()=>{const a=document.createElement("a");a.href=URL.createObjectURL(resultZip);a.download=resultName;a.click();URL.revokeObjectURL(a.href)};
+  </script>
+</body>
+</html>
