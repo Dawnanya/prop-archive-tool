@@ -29,10 +29,14 @@
   </main>
   <script>
     const TYPES={
+      "单人头像框":{meta:null,slots:[],numberedImages:true,allow:["image"]},
       "双人头像框":{meta:{relative_x:.5,relative_y:.5,ratio_size:.5},slots:["self_frame","other_frame"],allow:["image"]},
+      "麦位标签":{meta:null,slots:[],numberedImages:true,allow:["image"]},
+      "普通图片进场特效":{meta:null,slots:["body","bottom"],allow:["image"]},
+      "MP4/VAP 进场特效":{meta:null,slots:["animated","p"],allow:["video","json"]},
       "双人进场特效":{meta:{mode:"double",show_type:"11",relative_x:.5,relative_y:.5,ratio_size:.5},slots:["animated","p","self_frame","other_frame","peer_avatar"],allow:["image","video","json"]},
       "普通图片礼物":{meta:{type:"normal"},slots:["effect","thumb"],allow:["image"]},
-      "普通爆屏礼物":{meta:{showType:"blast"},slots:["animated","p","thumb"],allow:["image","video","json"]},
+      "普通爆屏/MP4 礼物":{meta:{showType:"blast"},slots:["animated","p","thumb"],allow:["image","video","json"]},
       "爆屏单人头像礼物":{meta:{type:"avatar",showType:"blast",avatarMode:"single"},slots:["animated","p","thumb"],allow:["image","video","json"]},
       "爆屏双人头像礼物":{meta:{type:"avatar",showType:"blast",avatarMode:"double"},slots:["animated","p","thumb"],allow:["image","video","json"]}
     };
@@ -42,7 +46,7 @@
     let resultZip,resultName;
     function kind(name){const ext=name.split(".").pop().toLowerCase();return imageExt.includes(ext)?"image":videoExt.includes(ext)?"video":ext==="json"?"json":"other"}
     function ext(name){return "."+name.split(".").pop().toLowerCase()}
-    function suggested(name,k,used){const n=name.toLowerCase();if(k==="video")return used.has("animated"+ext(name))?null:"animated"+ext(name);if(k==="json")return used.has("p.json")?null:"p.json";if(/self|current/.test(n))return "self_frame"+ext(name);if(/other|peer|target/.test(n))return "other_frame"+ext(name);if(/avatar/.test(n))return "peer_avatar"+ext(name);if(/thumb|icon/.test(n))return "thumb"+ext(name);if(/effect|body/.test(n))return "effect"+ext(name);return null}
+    function suggested(name,k,used){const n=name.toLowerCase();if(k==="video")return used.has("animated"+ext(name))?null:"animated"+ext(name);if(k==="json")return used.has("p.json")?null:"p.json";if(/self|current/.test(n))return "self_frame"+ext(name);if(/other|peer|target/.test(n))return "other_frame"+ext(name);if(/avatar/.test(n))return "peer_avatar"+ext(name);if(/thumb|icon/.test(n))return "thumb"+ext(name);if(/bottom/.test(n))return "bottom"+ext(name);if(/body/.test(n))return "body"+ext(name);if(/effect/.test(n))return "effect"+ext(name);return null}
     function showError(text){msg.textContent=text;msg.className="status error"}
     document.getElementById("process").onclick=async()=>{
       const file=document.getElementById("zipFile").files[0];if(!file)return showError("请先选择 ZIP 文件。");if(!window.JSZip)return showError("压缩包组件加载失败，请检查网络后重试。");
@@ -58,8 +62,8 @@
           out.file(`${typeSelect.value}/${target}`,await item.async("uint8array"));used.add(target);records.push(["保留",base,`重命名为 ${target}`]);
         }
         const imageSlots=spec.slots.filter(x=>!['animated','p'].includes(x));
-        images.forEach(({base,item},i)=>{const slot=imageSlots[i];if(!slot){records.push(["删除",base,"超出所需图片数量"]);return;}const target=slot+ext(base);if(used.has(target)){records.push(["删除",base,`${target} 已存在`]);return;}out.file(`${typeSelect.value}/${target}`,item.async("uint8array"));used.add(target);records.push(["保留",base,`重命名为 ${target}`]);});
-        out.file(`${typeSelect.value}/meta.json`,JSON.stringify(spec.meta,null,2));records.push(["生成","meta.json","写入道具配置"]);
+        images.forEach(({base,item},i)=>{const slot=spec.numberedImages?String(i+1):imageSlots[i];if(!slot){records.push(["删除",base,"超出所需图片数量"]);return;}const target=slot+ext(base);if(used.has(target)){records.push(["删除",base,`${target} 已存在`]);return;}out.file(`${typeSelect.value}/${target}`,item.async("uint8array"));used.add(target);records.push(["保留",base,`重命名为 ${target}`]);});
+        if(spec.meta){out.file(`${typeSelect.value}/meta.json`,JSON.stringify(spec.meta,null,2));records.push(["生成","meta.json","写入道具配置"]);}
         resultZip=await out.generateAsync({type:"blob"});resultName=`${typeSelect.value}_已整理.zip`;
         document.getElementById("summary").textContent=`道具种类：${typeSelect.value}；以下是文件处理记录。`;
         const log=document.getElementById("log");log.innerHTML="";records.forEach(r=>{const tr=document.createElement("tr");tr.innerHTML=`<td class="${r[0]==='保留'||r[0]==='生成'?'keep':'remove'}">${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td>`;log.append(tr)});
