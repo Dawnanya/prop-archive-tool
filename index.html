@@ -35,10 +35,10 @@
       "普通图片进场特效":{meta:null,slots:["body","bottom"],allow:["image"]},
       "MP4/VAP 进场特效":{meta:null,slots:["animated","p"],allow:["video","json"]},
       "双人进场特效":{meta:{mode:"double",show_type:"11",relative_x:.5,relative_y:.5,ratio_size:.5},slots:["animated","p","self_frame","other_frame","peer_avatar"],allow:["image","video","json"]},
-      "普通图片礼物":{meta:{type:"normal"},slots:["effect","thumb"],allow:["image"]},
-      "普通爆屏/MP4 礼物":{meta:{showType:"blast"},slots:["animated","p","thumb"],allow:["image","video","json"]},
-      "爆屏单人头像礼物":{meta:{type:"avatar",showType:"blast",avatarMode:"single"},slots:["animated","p","thumb"],allow:["image","video","json"]},
-      "爆屏双人头像礼物":{meta:{type:"avatar",showType:"blast",avatarMode:"double"},slots:["animated","p","thumb"],allow:["image","video","json"]}
+      "普通图片礼物":{meta:{type:"normal"},slots:["effect","thumb"],requiresThumb:true,allow:["image"]},
+      "普通爆屏/MP4 礼物":{meta:{showType:"blast"},slots:["animated","p","thumb"],requiresThumb:true,allow:["image","video","json"]},
+      "爆屏单人头像礼物":{meta:{type:"avatar",showType:"blast",avatarMode:"single"},slots:["animated","p","thumb"],requiresThumb:true,allow:["image","video","json"]},
+      "爆屏双人头像礼物":{meta:{type:"avatar",showType:"blast",avatarMode:"double"},slots:["animated","p","thumb"],requiresThumb:true,allow:["image","video","json"]}
     };
     const imageExt=["png","jpg","jpeg","webp"],videoExt=["mp4","vap"];
     const typeSelect=document.getElementById("propType"),msg=document.getElementById("message");
@@ -64,6 +64,7 @@
         const imageSlots=spec.slots.filter(x=>!['animated','p'].includes(x));
         images.forEach(({base,item},i)=>{const slot=spec.numberedImages?String(i+1):imageSlots[i];if(!slot){records.push(["删除",base,"超出所需图片数量"]);return;}const target=slot+ext(base);if(used.has(target)){records.push(["删除",base,`${target} 已存在`]);return;}out.file(`${typeSelect.value}/${target}`,item.async("uint8array"));used.add(target);records.push(["保留",base,`重命名为 ${target}`]);});
         if(spec.meta){out.file(`${typeSelect.value}/meta.json`,JSON.stringify(spec.meta,null,2));records.push(["生成","meta.json","写入道具配置"]);}
+        if(spec.requiresThumb&&!used.has("thumb.png")){records.unshift(["提示","缺少缩略图：thumb.PNG","该道具类型需要输出 thumb.png"]);}
         resultZip=await out.generateAsync({type:"blob"});resultName=`${typeSelect.value}_已整理.zip`;
         document.getElementById("summary").textContent=`道具种类：${typeSelect.value}；以下是文件处理记录。`;
         const log=document.getElementById("log");log.innerHTML="";records.forEach(r=>{const tr=document.createElement("tr");tr.innerHTML=`<td class="${r[0]==='保留'||r[0]==='生成'?'keep':'remove'}">${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td>`;log.append(tr)});
