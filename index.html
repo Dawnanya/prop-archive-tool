@@ -64,7 +64,7 @@
         const imageSlots=spec.slots.filter(x=>!['animated','p'].includes(x));
         images.forEach(({base,item},i)=>{const slot=spec.numberedImages?String(i+1):imageSlots[i];if(!slot){records.push(["删除",base,"超出所需图片数量"]);return;}const target=slot+ext(base);if(used.has(target)){records.push(["删除",base,`${target} 已存在`]);return;}out.file(`${typeSelect.value}/${target}`,item.async("uint8array"));used.add(target);records.push(["保留",base,`重命名为 ${target}`]);});
         if(spec.meta){out.file(`${typeSelect.value}/meta.json`,JSON.stringify(spec.meta,null,2));records.push(["生成","meta.json","写入道具配置"]);}
-        if(spec.requiresThumb&&!used.has("thumb.png")){records.unshift(["提示","zip压缩包缺少缩略图，无法新增thumb.png资源。","提示"]);}
+        if(spec.requiresThumb&&!used.has("thumb.png")){records.unshift(["提示","zip压缩包缺少缩略图，无法新增thumb.png资源。","请手动命名缩略图为【thumb.png】或补充资源后重新操作流程"]);}
         resultZip=await out.generateAsync({type:"blob"});resultName=`${typeSelect.value}_已整理.zip`;
         document.getElementById("summary").textContent=`道具种类：${typeSelect.value}；以下是文件处理记录。`;
         const log=document.getElementById("log");log.innerHTML="";records.forEach(r=>{const tr=document.createElement("tr");const missingThumb=r[0]==='提示'&&r[1]==='zip压缩包缺少缩略图，无法新增thumb.png资源。';tr.innerHTML=`<td class="${r[0]==='保留'||r[0]==='生成'?'keep':'remove'}">${r[0]}</td><td class="${missingThumb?'remove':''}">${r[1]}</td><td class="${missingThumb?'remove':''}">${r[2]}</td>`;log.append(tr)});
