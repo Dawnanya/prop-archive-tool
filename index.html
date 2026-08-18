@@ -16,6 +16,7 @@
       <p>上传 ZIP 文件并选择道具种类。工具会识别资源、清理多余文件、生成规范命名和 <code>meta.json</code>。</p>
       <div class="field"><label for="zipFile">1. 上传 ZIP 文件</label><input id="zipFile" type="file" accept=".zip,application/zip"></div>
       <div class="field"><label for="propType">2. 选择道具种类</label><select id="propType"></select></div>
+      <div class="field"><label for="thumbFile">3. 缩略图资源（可选）</label><input id="thumbFile" type="file" accept=".png,image/png"><p class="note">上传后会自动重命名为 <code>thumb.png</code> 并加入导出的资源包。</p></div>
       <div id="message" class="status hidden"></div>
       <div class="actions"><button id="process">处理并预览</button></div>
     </section>
@@ -49,7 +50,7 @@
     function suggested(name,k,used){const n=name.toLowerCase();if(k==="video")return used.has("animated"+ext(name))?null:"animated"+ext(name);if(k==="json")return used.has("p.json")?null:"p.json";if(/self|current/.test(n))return "self_frame"+ext(name);if(/other|peer|target/.test(n))return "other_frame"+ext(name);if(/avatar/.test(n))return "peer_avatar"+ext(name);if(/thumb|icon/.test(n))return "thumb"+ext(name);if(/bottom/.test(n))return "bottom"+ext(name);if(/body/.test(n))return "body"+ext(name);if(/effect/.test(n))return "effect"+ext(name);return null}
     function showError(text){msg.textContent=text;msg.className="status error"}
     document.getElementById("process").onclick=async()=>{
-      const file=document.getElementById("zipFile").files[0];if(!file)return showError("请先选择 ZIP 文件。");if(!window.JSZip)return showError("压缩包组件加载失败，请检查网络后重试。");
+      const file=document.getElementById("zipFile").files[0],thumbFile=document.getElementById("thumbFile").files[0];if(!file)return showError("请先选择 ZIP 文件。");if(thumbFile&&!/\.png$/i.test(thumbFile.name))return showError("缩略图资源请上传 PNG 文件。");if(!window.JSZip)return showError("压缩包组件加载失败，请检查网络后重试。");
       msg.className="status";msg.textContent="正在解压并整理…";
       try{
         const source=await JSZip.loadAsync(file),spec=TYPES[typeSelect.value],out=new JSZip(),used=new Set(),images=[],records=[];
@@ -64,6 +65,7 @@
         const imageSlots=spec.slots.filter(x=>!['animated','p'].includes(x));
         images.forEach(({base,item},i)=>{const slot=spec.numberedImages?String(i+1):imageSlots[i];if(!slot){records.push(["删除",base,"超出所需图片数量"]);return;}const target=slot+ext(base);if(used.has(target)){records.push(["删除",base,`${target} 已存在`]);return;}out.file(`${typeSelect.value}/${target}`,item.async("uint8array"));used.add(target);records.push(["保留",base,`重命名为 ${target}`]);});
         if(spec.meta){out.file(`${typeSelect.value}/meta.json`,JSON.stringify(spec.meta,null,2));records.push(["生成","meta.json","写入道具配置"]);}
+        if(thumbFile){out.file(`${typeSelect.value}/thumb.png`,await thumbFile.arrayBuffer());used.add("thumb.png");records.push(["保留",thumbFile.name,"缩略图资源重命名为 thumb.png"]);}
         if(spec.requiresThumb&&!used.has("thumb.png")){records.unshift(["提示","zip压缩包缺少缩略图，无法新增thumb.png资源。","请手动命名缩略图为【thumb.png】或补充资源后重新操作流程"]);}
         resultZip=await out.generateAsync({type:"blob"});resultName=`${typeSelect.value}_已整理.zip`;
         document.getElementById("summary").textContent=`道具种类：${typeSelect.value}；以下是文件处理记录。`;
