@@ -34,7 +34,7 @@
       "双人头像框":{meta:{relative_x:.5,relative_y:.5,ratio_size:.5},slots:["self_frame","other_frame"],allow:["image"]},
       "麦位标签":{meta:null,slots:[],numberedImages:true,allow:["image"]},
       "普通图片进场特效":{meta:null,slots:["body","bottom"],allow:["image"]},
-      "MP4/VAP 进场特效":{meta:null,slots:["animated","p"],allow:["video","json"]},
+      "MP4/VAP 进场特效":{meta:null,slots:["animated","p"],allow:["image","video","json"]},
       "双人进场特效":{meta:{mode:"double",show_type:"11",relative_x:.5,relative_y:.5,ratio_size:.5},slots:["animated","p","self_frame","other_frame","peer_avatar"],allow:["image","video","json"]},
       "普通图片礼物":{meta:{type:"normal"},slots:["effect","thumb"],requiresThumb:true,allow:["image"]},
       "普通爆屏/MP4 礼物":{meta:{showType:"blast"},slots:["animated","p","thumb"],requiresThumb:true,allow:["image","video","json"]},
@@ -58,7 +58,7 @@
           if(item.dir)continue;const base=path.split("/").pop(),k=kind(base);
           if(base.toLowerCase()==="meta.json")continue;
           if(!spec.allow.includes(k)){records.push(["删除",base,"不支持的格式"]);continue;}
-          let target=suggested(base,k,used);if(!target&&k==="image"){images.push({base,item});continue;}
+          let target;if(typeSelect.value==="MP4/VAP 进场特效"&&k==="image"){const extension=ext(base);target=extension===".webp"?"animated.webp":extension===".png"?"bottom.png":null;}else{target=suggested(base,k,used);}if(!target&&k==="image"){if(typeSelect.value==="MP4/VAP 进场特效"){records.push(["删除",base,"仅支持 WEBP 或 PNG 素材"]);continue;}images.push({base,item});continue;}
           if(!target||used.has(target)){records.push(["删除",base,"重复或无法识别"]);continue;}
           out.file(`${typeSelect.value}/${target}`,await item.async("uint8array"));used.add(target);records.push(["保留",base,`重命名为 ${target}`]);
         }
