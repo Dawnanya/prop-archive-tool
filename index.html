@@ -35,7 +35,7 @@
       "麦位标签":{meta:null,slots:[],numberedImages:true,allow:["image"]},
       "普通图片进场特效":{meta:null,slots:["body","bottom"],allow:["image"]},
       "MP4/VAP 进场特效":{meta:null,slots:["animated","p"],allow:["image","video","json"]},
-      "双人进场特效":{meta:{mode:"double",show_type:"11",relative_x:.5,relative_y:.5,ratio_size:.5},slots:["animated","p","self_frame","other_frame","peer_avatar"],allow:["image","video","json"]},
+      "双人进场特效":{meta:{mode:"double",show_type:"0",relative_x:.5,relative_y:.5,ratio_size:.5},slots:["animated","p","self_frame","peer_frame","peer_avatar"],allow:["image","video","json"]},
       "普通图片礼物":{meta:{type:"normal"},slots:["effect","thumb"],requiresThumb:true,allow:["image"]},
       "普通爆屏/MP4 礼物":{meta:{showType:"blast"},slots:["animated","p","thumb"],requiresThumb:true,allow:["image","video","json"]},
       "爆屏单人头像礼物":{meta:{type:"avatar",showType:"blast",avatarMode:"single"},slots:["animated","p","thumb"],requiresThumb:true,allow:["image","video","json"]},
@@ -43,29 +43,70 @@
     };
     const imageExt=["png","jpg","jpeg","webp"],videoExt=["mp4","vap"];
     const typeSelect=document.getElementById("propType"),msg=document.getElementById("message");
+    Object.assign(TYPES,{
+      "魔法音浪":{special:"numbered",max:10},"握手特效":{special:"numbered",max:8},
+      "麦位表情：普通动态":{special:"emojiAnimated",requiresThumb:true},
+      "麦位表情：多结果（骰子等）":{special:"emojiMultiple",requiresThumb:true},
+      "麦位表情：纯静态":{special:"emojiStatic",requiresThumb:true},
+      "资料卡皮肤：单人":{special:"skinSingle"},"资料卡皮肤：双人":{special:"skinDual"},
+      "房间背景：静态":{special:"backgroundImage"},"房间背景：动态":{special:"backgroundVideo"}
+    });
     Object.keys(TYPES).forEach(n=>typeSelect.add(new Option(n,n)));
     let resultZip,resultName;
     function kind(name){const ext=name.split(".").pop().toLowerCase();return imageExt.includes(ext)?"image":videoExt.includes(ext)?"video":ext==="json"?"json":"other"}
     function ext(name){return "."+name.split(".").pop().toLowerCase()}
     function suggested(name,k,used){const n=name.toLowerCase();if(k==="video")return used.has("animated"+ext(name))?null:"animated"+ext(name);if(k==="json")return used.has("p.json")?null:"p.json";if(/self|current/.test(n))return "self_frame"+ext(name);if(/other|peer|target/.test(n))return "other_frame"+ext(name);if(/avatar/.test(n))return "peer_avatar"+ext(name);if(/thumb|icon/.test(n))return "thumb"+ext(name);if(/bottom/.test(n))return "bottom"+ext(name);if(/body/.test(n))return "body"+ext(name);if(/effect/.test(n))return "effect"+ext(name);return null}
+    async function arrangeSpecial(source,spec,type,out,records,used){
+      const files=Object.values(source.files).filter(f=>!f.dir&&!f.name.split('/').some(p=>p.startsWith('.')||p==='__MACOSX')).sort((a,b)=>a.name.localeCompare(b.name,'en',{numeric:true}));
+      const picked=new Set(),base=f=>f.name.split('/').pop(),stem=f=>base(f).replace(/\.[^.]+$/,'').toLowerCase();
+      const image=f=>kind(base(f))==='image',png=f=>ext(base(f))==='.png',webp=f=>ext(base(f))==='.webp',video=f=>ext(base(f))==='.mp4';
+      async function put(f,target){if(!f)return null;if(used.has(target))throw Error('目标文件重复：'+target);out.file(target,await f.async('uint8array'));picked.add(f);used.add(target);records.push(['保留',f.name,'重命名为 '+target]);return target;}
+      async function take(names,predicate,target,required=false){let candidates=files.filter(f=>!picked.has(f)&&predicate(f));let f=names.map(n=>candidates.find(f=>stem(f)===n)).find(Boolean);if(!f&&candidates.length===1)f=candidates[0];if(!f&&required)throw Error(candidates.length?'有多个候选资源，请先按用途命名：'+names.join(' / '):'缺少资源：'+names[0]);return put(f,f?(target||names[0])+ext(base(f)):null);}
+      async function meta(value){out.file('meta.json',JSON.stringify(value,null,2));used.add('meta.json');records.push(['生成','meta.json','写入道具配置']);}
+      let original={};const metaFiles=files.filter(f=>base(f).toLowerCase()==='meta.json');if(metaFiles.length>1)throw Error('包含多套配置，请只上传本次需要的一套素材');if(metaFiles.length){try{original=JSON.parse(await metaFiles[0].async('string'));}catch{throw Error('meta.json 格式错误，请修正后重试');}}
+      if(type.includes('进场特效')){
+        const double=type==='双人进场特效',picture=type==='普通图片进场特效';
+        if(!picture){await take(['animated','body'],video,'animated',true);const configs=files.filter(f=>base(f).toLowerCase()==='p.json');if(configs.length>1)throw Error('存在多个 p.json，请仅保留配套配置');if(configs[0]){try{JSON.parse(await configs[0].async('string'));}catch{throw Error('p.json 无法解析，请使用交付的原始配置');}await put(configs[0],'p.json');}else records.push(['提示','缺少 p.json','VAP 素材请补充原始配置，不能保证当前比例正确']);}
+        const reserved=f=>!['bottom','thumb','icon','self_frame','peer_frame','other_frame','peer_avatar','avatar'].includes(stem(f));
+        await take(['body','main'],f=>image(f)&&reserved(f),'body',picture);
+        await take(['bottom'],f=>image(f)&&stem(f)==='bottom','bottom');
+        if(double){await take(['self_frame','sender_avatar_frame'],f=>image(f)&&['self_frame','sender_avatar_frame'].includes(stem(f)),'self_frame');await take(['peer_frame','other_frame','peer_avatar_frame'],f=>image(f)&&['peer_frame','other_frame','peer_avatar_frame'].includes(stem(f)),'peer_frame');await take(['peer_avatar','avatar'],f=>image(f)&&['peer_avatar','avatar'].includes(stem(f)),'peer_avatar');await meta({...original,mode:'double',show_type:'0'});}
+        else if(original.show_type==='0'||original.showType==='0')await meta({show_type:'0'});
+      }else if(spec.special==='numbered'){
+        for(const f of files.filter(image)){const n=Number(stem(f));if(!Number.isInteger(n)||n<1||n>spec.max)throw Error('请按固定麦位/握手组编号命名为 1 至 '+spec.max+'，不可自动重排：'+base(f));await put(f,n+ext(base(f)));}if(!used.size)throw Error('缺少图片资源');
+      }else if(spec.special.startsWith('skin')){
+        const main=await take(['main'],webp,'main',true),m={mode:spec.special==='skinDual'?'dual':'single',main};
+        if(m.mode==='dual'){const frame=await take(['peer_frame'],f=>image(f)&&stem(f)==='peer_frame','peer_frame'),avatar=await take(['peer_avatar'],f=>image(f)&&stem(f)==='peer_avatar','peer_avatar');if(frame)m.peer_frame=frame;if(avatar)m.peer_avatar=avatar;for(const [key,fallback] of Object.entries({relative_x:.7,relative_y:.24,ratio_size:.17})){const v=original[key]??fallback;if(typeof v!=='number'||v<0||v>1||(key==='ratio_size'&&v===0))throw Error(key+' 必须为有效比例数值');m[key]=v;}}await meta(m);
+      }else if(spec.special.startsWith('background')){
+        const imagePath=await take(['background'],png,'background',true),m={type:'image',image:imagePath};if(spec.special==='backgroundVideo'){m.type='video';m.video=await take(['background'],video,'background',true);}await meta(m);
+      }else if(spec.special.startsWith('emoji')){
+        const m={thumb:'thumb.png'},thumb=files.find(f=>stem(f)==='thumb'&&png(f));if(thumb)await put(thumb,'thumb.png');
+        if(spec.special==='emojiAnimated'){const result=await take(['result'],webp,'result',true);m.animation=result;m.results=[result];}
+        else if(spec.special==='emojiStatic'){m.results=[await take(['result'],png,'result',true)];}
+        else {m.animation=await take(['animation'],webp,'animation',true);const results=files.filter(f=>!picked.has(f)&&image(f)&&stem(f)!=='thumb');if(!results.length)throw Error('缺少多结果表情图片');m.results=[];for(const [i,f] of results.entries())m.results.push(await put(f,'results/'+(i+1)+ext(base(f))));}await meta(m);
+      }
+      for(const f of files)if(!picked.has(f)&&base(f).toLowerCase()!=='meta.json')records.push(['删除',f.name,'未用于当前道具']);
+    }
     function showError(text){msg.textContent=text;msg.className="status error"}
     document.getElementById("process").onclick=async()=>{
       const file=document.getElementById("zipFile").files[0],thumbFile=document.getElementById("thumbFile").files[0];if(!file)return showError("请先选择 ZIP 文件。");if(thumbFile&&!/\.png$/i.test(thumbFile.name))return showError("缩略图资源请上传 PNG 文件。");if(!window.JSZip)return showError("压缩包组件加载失败，请检查网络后重试。");
       msg.className="status";msg.textContent="正在解压并整理…";
       try{
         const source=await JSZip.loadAsync(file),spec=TYPES[typeSelect.value],out=new JSZip(),used=new Set(),images=[],records=[];
+        if(spec.special||typeSelect.value.includes('进场特效')){await arrangeSpecial(source,spec,typeSelect.value,out,records,used);}else{
         for(const [path,item] of Object.entries(source.files)){
           if(item.dir)continue;const base=path.split("/").pop(),k=kind(base);
           if(base.toLowerCase()==="meta.json")continue;
           if(!spec.allow.includes(k)){records.push(["删除",base,"不支持的格式"]);continue;}
           let target;if(typeSelect.value==="MP4/VAP 进场特效"&&k==="image"){const extension=ext(base);target=extension===".webp"?"animated.webp":extension===".png"?"bottom.png":null;}else{target=suggested(base,k,used);}if(!target&&k==="image"){if(typeSelect.value==="MP4/VAP 进场特效"){records.push(["删除",base,"仅支持 WEBP 或 PNG 素材"]);continue;}images.push({base,item});continue;}
           if(!target||used.has(target)){records.push(["删除",base,"重复或无法识别"]);continue;}
-          out.file(`${typeSelect.value}/${target}`,await item.async("uint8array"));used.add(target);records.push(["保留",base,`重命名为 ${target}`]);
+          out.file(target,await item.async("uint8array"));used.add(target);records.push(["保留",base,`重命名为 ${target}`]);
         }
         const imageSlots=spec.slots.filter(x=>!['animated','p'].includes(x));
-        images.forEach(({base,item},i)=>{const slot=spec.numberedImages?String(i+1):imageSlots[i];if(!slot){records.push(["删除",base,"超出所需图片数量"]);return;}const target=slot+ext(base);if(used.has(target)){records.push(["删除",base,`${target} 已存在`]);return;}out.file(`${typeSelect.value}/${target}`,item.async("uint8array"));used.add(target);records.push(["保留",base,`重命名为 ${target}`]);});
-        if(spec.meta){out.file(`${typeSelect.value}/meta.json`,JSON.stringify(spec.meta,null,2));records.push(["生成","meta.json","写入道具配置"]);}
-        if(thumbFile){out.file(`${typeSelect.value}/thumb.png`,await thumbFile.arrayBuffer());used.add("thumb.png");records.push(["保留",thumbFile.name,"缩略图资源重命名为 thumb.png"]);}
+        images.forEach(({base,item},i)=>{const slot=spec.numberedImages?String(i+1):imageSlots[i];if(!slot){records.push(["删除",base,"超出所需图片数量"]);return;}const target=slot+ext(base);if(used.has(target)){records.push(["删除",base,`${target} 已存在`]);return;}out.file(target,item.async("uint8array"));used.add(target);records.push(["保留",base,`重命名为 ${target}`]);});
+        if(spec.meta){out.file("meta.json",JSON.stringify(spec.meta,null,2));records.push(["生成","meta.json","写入道具配置"]);}
+        }
+        if(thumbFile){out.file("thumb.png",await thumbFile.arrayBuffer());used.add("thumb.png");records.push(["保留",thumbFile.name,"缩略图资源重命名为 thumb.png"]);}
         if(spec.requiresThumb&&!used.has("thumb.png")){records.unshift(["提示","zip压缩包缺少缩略图，无法新增thumb.png资源。","请手动命名缩略图为【thumb.png】或补充资源后重新操作流程"]);}
         resultZip=await out.generateAsync({type:"blob"});resultName=`${typeSelect.value}_已整理.zip`;
         document.getElementById("summary").textContent=`道具种类：${typeSelect.value}；以下是文件处理记录。`;
