@@ -16,7 +16,7 @@
       <p>上传 ZIP 文件并选择道具种类。工具会识别资源、清理多余文件、生成规范命名和 <code>meta.json</code>。</p>
       <div class="field"><label for="zipFile">1. 上传 ZIP 文件</label><input id="zipFile" type="file" accept=".zip,application/zip"></div>
       <div class="field"><label for="propType">2. 选择道具种类</label><select id="propType"></select></div>
-      <div class="field"><label for="thumbFile">3. 缩略图资源（可选）</label><input id="thumbFile" type="file" accept=".png,image/png"><p class="note">上传后会自动重命名为 <code>thumb.png</code> 并加入导出的资源包。</p></div>
+      <div class="field"><label for="thumbFile">3. 缩略图资源（ZIP 内缺少时补充）</label><input id="thumbFile" type="file" accept=".png,image/png"><p class="note" id="thumbHelp"></p></div>
       <div id="message" class="status hidden"></div>
       <div class="actions"><button id="process">处理并预览</button></div>
     </section>
@@ -52,6 +52,20 @@
       "房间背景：静态":{special:"backgroundImage"},"房间背景：动态":{special:"backgroundVideo"}
     });
     Object.keys(TYPES).forEach(n=>typeSelect.add(new Option(n,n)));
+    const THUMB_SIZES={"魔法音浪":[160,160],"握手特效":[200,200],"麦位表情：普通动态":[150,150],"麦位表情：多结果（骰子等）":[150,150],"麦位表情：纯静态":[150,150],"资料卡皮肤：单人":[108,108],"资料卡皮肤：双人":[108,108],"房间背景：静态":[240,416],"房间背景：动态":[240,416]};
+    Object.keys(THUMB_SIZES).forEach(n=>TYPES[n].requiresThumb=true);
+    function thumbHelp(){const s=THUMB_SIZES[typeSelect.value];document.getElementById('thumbHelp').textContent='优先读取 ZIP 内'+(s?s.join('×')+' 像素的 PNG':'已命名为 thumb.png 的 PNG')+'，自动命名为 thumb.png；找不到时才使用外部上传资源。'+(typeSelect.value.startsWith('房间背景')?'商城缩略图为 240×416，108×108 的 H5 缩略图不会混用。':'');}
+    typeSelect.onchange=thumbHelp;thumbHelp();
+    async function pngSize(bytes){const b=new Uint8Array(bytes);if(b.length<24||![137,80,78,71,13,10,26,10].every((v,i)=>b[i]===v)||String.fromCharCode(...b.slice(12,16))!=='IHDR')return null;const v=new DataView(b.buffer,b.byteOffset,b.byteLength);return [v.getUint32(16),v.getUint32(20)];}
+    async function findThumbnail(source,type,external){
+      const spec=TYPES[type],size=THUMB_SIZES[type];if(!spec.requiresThumb&&!external)return null;
+      const candidates=[];
+      for(const f of Object.values(source.files)){if(f.dir||!f.name.toLowerCase().endsWith('.png')||f.name.split('/').some(p=>p.startsWith('.')||p==='__MACOSX'))continue;const named=f.name.split('/').pop().toLowerCase()==='thumb.png';if(!size&&!named)continue;const data=await f.async('uint8array'),actual=await pngSize(data);if(actual&&(!size||actual.every((v,i)=>v===size[i])))candidates.push({file:f,data,named});}
+      const named=candidates.filter(c=>c.named),matches=named.length?named:candidates;
+      if(matches.length===1)return {...matches[0],origin:'ZIP 内按尺寸识别'};
+      if(matches.length>1&&!external)throw Error('ZIP 内有多张匹配缩略图：'+matches.map(c=>c.file.name).join('、')+'。请将所需图片命名为 thumb.png，或通过缩略图资源上传明确选择。');
+      if(external){const data=new Uint8Array(await external.arrayBuffer()),actual=await pngSize(data);if(!actual)throw Error('外部缩略图不是有效的 PNG 文件');if(size&&!actual.every((v,i)=>v===size[i]))throw Error('缩略图尺寸应为 '+size.join('×')+'，实际为 '+actual.join('×'));return {data,origin:'外部补充',name:external.name};}return null;
+    }
     let resultZip,resultName;
     function kind(name){const ext=name.split(".").pop().toLowerCase();return imageExt.includes(ext)?"image":videoExt.includes(ext)?"video":ext==="json"?"json":"other"}
     function ext(name){return "."+name.split(".").pop().toLowerCase()}
@@ -82,7 +96,7 @@
       }else if(spec.special.startsWith('emoji')){
         const m={thumb:'thumb.png'},thumb=files.find(f=>stem(f)==='thumb'&&png(f));if(thumb)await put(thumb,'thumb.png');
         if(spec.special==='emojiAnimated'){const result=await take(['result'],webp,'result',true);m.animation=result;m.results=[result];}
-        else if(spec.special==='emojiStatic'){m.results=[await take(['result'],png,'result',true)];}
+        else if(spec.special==='emojiStatic'){const result=files.find(f=>stem(f)==='result'&&png(f));if(!result&&thumb&&files.filter(png).length===1)m.results=[await put(thumb,'result.png')];else m.results=[await take(['result'],png,'result',true)];}
         else {m.animation=await take(['animation'],webp,'animation',true);const results=files.filter(f=>!picked.has(f)&&image(f)&&stem(f)!=='thumb');if(!results.length)throw Error('缺少多结果表情图片');m.results=[];for(const [i,f] of results.entries())m.results.push(await put(f,'results/'+(i+1)+ext(base(f))));}await meta(m);
       }
       for(const f of files)if(!picked.has(f)&&base(f).toLowerCase()!=='meta.json')records.push(['删除',f.name,'未用于当前道具']);
@@ -93,6 +107,8 @@
       msg.className="status";msg.textContent="正在解压并整理…";
       try{
         const source=await JSZip.loadAsync(file),spec=TYPES[typeSelect.value],out=new JSZip(),used=new Set(),images=[],records=[];
+        const thumbnail=await findThumbnail(source,typeSelect.value,thumbFile);
+        if(thumbnail&&thumbnail.file&&spec.special!=='emojiStatic')source.remove(thumbnail.file.name);
         if(spec.special||typeSelect.value.includes('进场特效')){await arrangeSpecial(source,spec,typeSelect.value,out,records,used);}else{
         for(const [path,item] of Object.entries(source.files)){
           if(item.dir)continue;const base=path.split("/").pop(),k=kind(base);
@@ -106,7 +122,7 @@
         images.forEach(({base,item},i)=>{const slot=spec.numberedImages?String(i+1):imageSlots[i];if(!slot){records.push(["删除",base,"超出所需图片数量"]);return;}const target=slot+ext(base);if(used.has(target)){records.push(["删除",base,`${target} 已存在`]);return;}out.file(target,item.async("uint8array"));used.add(target);records.push(["保留",base,`重命名为 ${target}`]);});
         if(spec.meta){out.file("meta.json",JSON.stringify(spec.meta,null,2));records.push(["生成","meta.json","写入道具配置"]);}
         }
-        if(thumbFile){out.file("thumb.png",await thumbFile.arrayBuffer());used.add("thumb.png");records.push(["保留",thumbFile.name,"缩略图资源重命名为 thumb.png"]);}
+        if(thumbnail){out.file("thumb.png",thumbnail.data);used.add("thumb.png");records.push(["保留",thumbnail.file?.name||thumbnail.name,thumbnail.origin+"，输出 thumb.png"]);}
         if(spec.requiresThumb&&!used.has("thumb.png")){records.unshift(["提示","zip压缩包缺少缩略图，无法新增thumb.png资源。","请手动命名缩略图为【thumb.png】或补充资源后重新操作流程"]);}
         resultZip=await out.generateAsync({type:"blob"});resultName=`${typeSelect.value}_已整理.zip`;
         document.getElementById("summary").textContent=`道具种类：${typeSelect.value}；以下是文件处理记录。`;
