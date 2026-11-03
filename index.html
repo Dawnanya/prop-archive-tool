@@ -67,6 +67,27 @@
       if(external){const data=new Uint8Array(await external.arrayBuffer()),actual=await pngSize(data);if(!actual)throw Error('外部缩略图不是有效的 PNG 文件');if(size&&!actual.every((v,i)=>v===size[i]))throw Error('缩略图尺寸应为 '+size.join('×')+'，实际为 '+actual.join('×'));return {data,origin:'外部补充',name:external.name};}return null;
     }
     let resultZip,resultName;
+    async function expandNestedZip(root){
+      const merged=new JSZip(),state={count:0,bytes:0,archives:0};
+      async function walk(zip,prefix,depth){
+        for(const f of Object.values(zip.files)){
+          if(f.dir||f.name.split('/').some(p=>p.startsWith('.')||p==='__MACOSX'))continue;
+          if(++state.count>5000)throw Error('压缩包内文件过多（最多 5000 个），请拆分处理');
+          const data=await f.async('uint8array');state.bytes+=data.byteLength;
+          if(state.bytes>300*1024*1024)throw Error('解压数据超过 300MB，请拆分压缩包');
+          const path=prefix+f.name;
+          if(/\.zip$/i.test(f.name)){
+            if(depth>=5)throw Error('ZIP 嵌套超过 5 层，请先手动整理');
+            let inner;try{inner=await JSZip.loadAsync(data);}catch{throw Error('无法解压内层 ZIP（可能损坏或加密）：'+path);}
+            state.archives++;await walk(inner,path+'/',depth+1);
+          }else{
+            if(merged.file(path))throw Error('内层资源路径重复：'+path);
+            merged.file(path,data);
+          }
+        }
+      }
+      await walk(root,'',0);return {source:merged,archives:state.archives};
+    }
     function kind(name){const ext=name.split(".").pop().toLowerCase();return imageExt.includes(ext)?"image":videoExt.includes(ext)?"video":ext==="json"?"json":"other"}
     function ext(name){return "."+name.split(".").pop().toLowerCase()}
     function suggested(name,k,used){const n=name.toLowerCase();if(k==="video")return used.has("animated"+ext(name))?null:"animated"+ext(name);if(k==="json")return used.has("p.json")?null:"p.json";if(/self|current/.test(n))return "self_frame"+ext(name);if(/other|peer|target/.test(n))return "other_frame"+ext(name);if(/avatar/.test(n))return "peer_avatar"+ext(name);if(/thumb|icon/.test(n))return "thumb"+ext(name);if(/bottom/.test(n))return "bottom"+ext(name);if(/body/.test(n))return "body"+ext(name);if(/effect/.test(n))return "effect"+ext(name);return null}
@@ -106,7 +127,8 @@
       const file=document.getElementById("zipFile").files[0],thumbFile=document.getElementById("thumbFile").files[0];if(!file)return showError("请先选择 ZIP 文件。");if(thumbFile&&!/\.png$/i.test(thumbFile.name))return showError("缩略图资源请上传 PNG 文件。");if(!window.JSZip)return showError("压缩包组件加载失败，请检查网络后重试。");
       msg.className="status";msg.textContent="正在解压并整理…";
       try{
-        const source=await JSZip.loadAsync(file),spec=TYPES[typeSelect.value],out=new JSZip(),used=new Set(),images=[],records=[];
+        const expanded=await expandNestedZip(await JSZip.loadAsync(file)),source=expanded.source,spec=TYPES[typeSelect.value],out=new JSZip(),used=new Set(),images=[],records=[];
+        if(expanded.archives)records.push(['提示','已解压 '+expanded.archives+' 个内层 ZIP','统一读取内部素材，导出时不保留 ZIP 嵌套目录']);
         const thumbnail=await findThumbnail(source,typeSelect.value,thumbFile);
         if(thumbnail&&thumbnail.file&&spec.special!=='emojiStatic')source.remove(thumbnail.file.name);
         if(spec.special||typeSelect.value.includes('进场特效')){await arrangeSpecial(source,spec,typeSelect.value,out,records,used);}else{
