@@ -52,15 +52,14 @@
       "房间背景：静态":{special:"backgroundImage"},"房间背景：动态":{special:"backgroundVideo"}
     });
     Object.keys(TYPES).forEach(n=>typeSelect.add(new Option(n,n)));
-    const THUMB_SIZES={"魔法音浪":[160,160],"握手特效":[200,200],"麦位表情：普通动态":[150,150],"麦位表情：多结果（骰子等）":[150,150],"麦位表情：纯静态":[150,150],"资料卡皮肤：单人":[108,108],"资料卡皮肤：双人":[108,108],"房间背景：静态":[240,416],"房间背景：动态":[240,416]};
-    Object.keys(THUMB_SIZES).forEach(n=>TYPES[n].requiresThumb=true);
-    function thumbHelp(){const s=THUMB_SIZES[typeSelect.value];document.getElementById('thumbHelp').textContent='优先读取 ZIP 内'+(s?s.join('×')+' 像素的 PNG':'已命名为 thumb.png 的 PNG')+'，自动命名为 thumb.png；找不到时才使用外部上传资源。'+(typeSelect.value.startsWith('房间背景')?'商城缩略图为 240×416，108×108 的 H5 缩略图不会混用。':'');}
+    const THUMB_SIZES={"普通图片礼物":[200,200],"普通爆屏/MP4 礼物":[200,200],"爆屏单人头像礼物":[200,200],"爆屏双人头像礼物":[200,200],"魔法音浪":[160,160],"握手特效":[200,200],"麦位表情：普通动态":[150,150],"麦位表情：多结果（骰子等）":[150,150],"麦位表情：纯静态":[150,150],"资料卡皮肤：单人":[108,108],"资料卡皮肤：双人":[108,108],"房间背景：静态":[260,416],"房间背景：动态":[260,416]};
+    function thumbHelp(){const s=THUMB_SIZES[typeSelect.value];document.getElementById('thumbHelp').textContent='优先读取 ZIP 内'+(s?s.join('×')+' 像素的 PNG':'已命名为 thumb.png 的 PNG')+'，自动命名为 thumb.png；找不到时才使用外部上传资源。'+(typeSelect.value.startsWith('房间背景')?'商城缩略图为 260×416，108×108 的 H5 缩略图不会混用。':'')+' 支持内层 ZIP；预览记录会显示图片实际尺寸。';}
     typeSelect.onchange=thumbHelp;thumbHelp();
     async function pngSize(bytes){const b=new Uint8Array(bytes);if(b.length<24||![137,80,78,71,13,10,26,10].every((v,i)=>b[i]===v)||String.fromCharCode(...b.slice(12,16))!=='IHDR')return null;const v=new DataView(b.buffer,b.byteOffset,b.byteLength);return [v.getUint32(16),v.getUint32(20)];}
     async function findThumbnail(source,type,external){
-      const spec=TYPES[type],size=THUMB_SIZES[type];if(!spec.requiresThumb&&!external)return null;
+      const spec=TYPES[type],size=THUMB_SIZES[type];if(!spec.requiresThumb&&!size&&!external)return null;
       const candidates=[];
-      for(const f of Object.values(source.files)){if(f.dir||!f.name.toLowerCase().endsWith('.png')||f.name.split('/').some(p=>p.startsWith('.')||p==='__MACOSX'))continue;const named=f.name.split('/').pop().toLowerCase()==='thumb.png';if(!size&&!named)continue;const data=await f.async('uint8array'),actual=await pngSize(data);if(actual&&(!size||actual.every((v,i)=>v===size[i])))candidates.push({file:f,data,named});}
+      for(const f of Object.values(source.files)){if(f.dir||!f.name.toLowerCase().endsWith('.png')||f.name.split('/').some(p=>p.startsWith('.')||p==='__MACOSX'))continue;const named=f.name.split('/').pop().toLowerCase()==='thumb.png';if(TYPES[type].special==='numbered'&&/^[1-9]\d*\.png$/i.test(f.name.split('/').pop()))continue;if(!size&&!named)continue;const data=await f.async('uint8array'),actual=await pngSize(data);if(actual&&(!size||actual.every((v,i)=>v===size[i])))candidates.push({file:f,data,named});}
       const named=candidates.filter(c=>c.named),matches=named.length?named:candidates;
       if(matches.length===1)return {...matches[0],origin:'ZIP 内按尺寸识别'};
       if(matches.length>1&&!external)throw Error('ZIP 内有多张匹配缩略图：'+matches.map(c=>c.file.name).join('、')+'。请将所需图片命名为 thumb.png，或通过缩略图资源上传明确选择。');
@@ -122,6 +121,49 @@
       }
       for(const f of files)if(!picked.has(f)&&base(f).toLowerCase()!=='meta.json')records.push(['删除',f.name,'未用于当前道具']);
     }
+    async function readImageAsset(file){
+      const data=await file.async('uint8array');let bitmap;
+      try{bitmap=await createImageBitmap(new Blob([data]));}catch{throw Error('图片无法解码：'+file.name);}
+      const info={width:bitmap.width,height:bitmap.height,animated:false};bitmap.close();
+      if(ext(file.name)==='.webp'){const view=new DataView(data.buffer,data.byteOffset,data.byteLength);for(let i=12;i+8<=data.length;){const tag=String.fromCharCode(...data.slice(i,i+4)),length=view.getUint32(i+4,true);if(tag==='ANIM'||tag==='ANMF')info.animated=true;if(length>data.length-i-8)break;i+=8+length+(length%2);}}
+      return {...info,data,file,stem:file.name.split('/').pop().replace(/\.[^.]+$/,'').toLowerCase(),extension:ext(file.name)};
+    }
+    function chooseAsset(assets,names,sizes,required,label){
+      const valid=assets.filter(a=>(!sizes||sizes.some(([w,h])=>a.width===w&&a.height===h)));
+      const named=valid.filter(a=>names.includes(a.stem));const choices=named.length?named:valid;
+      if(choices.length>1)throw Error(label+' 有多个同尺寸候选，请仅保留一套或将目标命名为 '+names[0]+'：'+choices.map(a=>a.file.name).join('、'));
+      if(choices.length===1)return choices[0];
+      if(required)throw Error('缺少'+label+(sizes?'（'+sizes.map(s=>s.join('×')).join(' / ')+'）':'')+'，请检查实际尺寸');return null;
+    }
+    async function arrangeDimensions(source,spec,type,out,records,used){
+      const files=Object.values(source.files).filter(f=>!f.dir),assets=[];const selected=new Set();
+      for(const f of files)if(kind(f.name)==='image'){const a=await readImageAsset(f);assets.push(a);records.push(['检查',f.name,a.width+'×'+a.height+(a.animated?' 动态 WebP':'')]);}
+      const metas=files.filter(f=>f.name.split('/').pop().toLowerCase()==='meta.json');if(metas.length>1)throw Error('存在多套 meta.json，请只保留一套道具');let original={};if(metas.length){try{original=JSON.parse(await metas[0].async('string'));}catch{throw Error('meta.json 格式错误');}}
+      async function put(a,role){if(!a)return null;const target=role+a.extension;if(used.has(target))throw Error('重复目标：'+target);out.file(target,a.data);used.add(target);selected.add(a);records.push(['保留',a.file.name,'按尺寸识别为 '+target]);return target;}
+      async function take(names,sizes,required,label,predicate=()=>true){const a=chooseAsset(assets.filter(a=>!selected.has(a)&&predicate(a)),names,sizes,required,label||names[0]);return put(a,names[0]);}
+      function meta(m){out.file('meta.json',JSON.stringify(m,null,2));used.add('meta.json');records.push(['生成','meta.json','按 Wiki 写入配置']);}
+      function ratios(defaults){const r={};for(const [k,d] of Object.entries(defaults)){const n=original[k]??d;if(typeof n!=='number'||!Number.isFinite(n)||n<0||n>1||(k==='ratio_size'&&n===0))throw Error(k+' 必须是有效比例数值');r[k]=n;}return r;}
+      if(type==='单人头像框'||type==='麦位标签'||spec.special==='numbered'){
+        const sizes=type==='单人头像框'?[[200,250]]:type==='麦位标签'?[[64,64]]:type==='魔法音浪'?[[300,300]]:[[200,200]];
+        const matching=assets.filter(a=>sizes.some(([w,h])=>a.width===w&&a.height===h));if(!matching.length)throw Error('缺少规范尺寸资源：'+sizes[0].join('×'));
+        const ids=new Set();for(const a of matching){let id=a.stem;if(!/^[1-9]\d*$/.test(id)){if(matching.length===1&&spec.special!=='numbered')id='1';else throw Error('尺寸不能确定麦位编号，请命名为纯数字：'+a.file.name);}if(Number(id)>(spec.max||10)||ids.has(id))throw Error('编号超出范围或重复：'+id);ids.add(id);await put(a,id);}
+      }else if(type==='双人头像框'){
+        await take(['self_frame'],[[200,250]],true,'主头像框');await take(['other_frame','peer_frame'],[[100,100]],true,'副头像框');meta(ratios({relative_x:.5,relative_y:.5,ratio_size:.5}));
+      }else if(type==='普通图片进场特效'){
+        await take(['body','main'],[[190,190],[500,500]],true,'进场主体');await take(['bottom'],[[482,114],[600,100]],false,'底板');if(original.show_type==='0'||original.showType==='0')meta({show_type:'0'});
+      }else if(spec.special?.startsWith('skin')){
+        const main=await take(['main'],[[720,362]],true,'资料卡主体'),m={mode:spec.special==='skinDual'?'dual':'single',main};
+        if(m.mode==='dual'){for(const role of ['peer_frame','peer_avatar']){const p=await take([role],null,false,role,a=>a.stem===role);if(p)m[role]=p;}Object.assign(m,ratios({relative_x:.7,relative_y:.24,ratio_size:.17}));}meta(m);
+      }else if(spec.special?.startsWith('background')){
+        const imagePath=await take(['background'],[[1500,2668]],true,'背景静态图'),m={type:'image',image:imagePath};
+        if(spec.special==='backgroundVideo'){const videos=files.filter(f=>ext(f.name)==='.mp4');if(videos.length!==1)throw Error('动态背景需要唯一一个 MP4 文件');const f=videos[0],data=await f.async('uint8array'),url=URL.createObjectURL(new Blob([data],{type:'video/mp4'}));try{const v=document.createElement('video');v.preload='metadata';const size=await new Promise((resolve,reject)=>{const timer=setTimeout(()=>{v.removeAttribute('src');v.load();reject(Error('背景视频尺寸读取超时'));},15000);v.onloadedmetadata=()=>{clearTimeout(timer);resolve([v.videoWidth,v.videoHeight]);};v.onerror=()=>{clearTimeout(timer);reject(Error('背景视频无法读取'));};v.src=url;});if(size[0]!==750||size[1]!==1334)throw Error('背景视频应为 750×1334，实际 '+size.join('×'));out.file('background.mp4',data);used.add('background.mp4');records.push(['保留',f.name,'750×1334 → background.mp4']);m.type='video';m.video='background.mp4';}finally{URL.revokeObjectURL(url);}}meta(m);
+      }else if(spec.special?.startsWith('emoji')){
+        const m={thumb:'thumb.png'},valid=a=>a.width===150&&a.height===150;
+        if(spec.special==='emojiStatic'){m.results=[await take(['result'],[[150,150]],true,'静态表情',a=>a.extension==='.png')];}
+        else{const role=spec.special==='emojiAnimated'?'result':'animation';m.animation=await take([role],[[150,150]],true,'动态表情',a=>a.extension==='.webp'&&a.animated);if(spec.special==='emojiAnimated')m.results=[m.animation];else{m.results=[];const results=assets.filter(a=>!selected.has(a)&&valid(a)&&a.stem!=='thumb').sort((a,b)=>a.file.name.localeCompare(b.file.name,'en',{numeric:true}));if(!results.length)throw Error('缺少 150×150 表情结果图');for(const [i,a] of results.entries())m.results.push(await put(a,'results/'+(i+1)));}}meta(m);
+      }else if(type==='普通图片礼物'){await take(['effect'],null,true,'礼物主体',a=>a.stem!=='thumb');meta({type:'normal'});records.push(['提示','礼物主体尺寸','画板未给普通图片礼物唯一主体尺寸，按唯一非缩略图资源识别，不强制缩放']);}
+      for(const a of assets)if(!selected.has(a))records.push(['删除',a.file.name,'未匹配当前道具的资源用途']);
+    }
     function showError(text){msg.textContent=text;msg.className="status error"}
     document.getElementById("process").onclick=async()=>{
       const file=document.getElementById("zipFile").files[0],thumbFile=document.getElementById("thumbFile").files[0];if(!file)return showError("请先选择 ZIP 文件。");if(thumbFile&&!/\.png$/i.test(thumbFile.name))return showError("缩略图资源请上传 PNG 文件。");if(!window.JSZip)return showError("压缩包组件加载失败，请检查网络后重试。");
@@ -131,7 +173,8 @@
         if(expanded.archives)records.push(['提示','已解压 '+expanded.archives+' 个内层 ZIP','统一读取内部素材，导出时不保留 ZIP 嵌套目录']);
         const thumbnail=await findThumbnail(source,typeSelect.value,thumbFile);
         if(thumbnail&&thumbnail.file&&spec.special!=='emojiStatic')source.remove(thumbnail.file.name);
-        if(spec.special||typeSelect.value.includes('进场特效')){await arrangeSpecial(source,spec,typeSelect.value,out,records,used);}else{
+        const preserveVap=typeSelect.value==='MP4/VAP 进场特效'||typeSelect.value==='双人进场特效'||typeSelect.value.includes('爆屏');
+        if(!preserveVap){await arrangeDimensions(source,spec,typeSelect.value,out,records,used);}else if(spec.special||typeSelect.value.includes('进场特效')){await arrangeSpecial(source,spec,typeSelect.value,out,records,used);}else{
         for(const [path,item] of Object.entries(source.files)){
           if(item.dir)continue;const base=path.split("/").pop(),k=kind(base);
           if(base.toLowerCase()==="meta.json")continue;
@@ -148,7 +191,7 @@
         if(spec.requiresThumb&&!used.has("thumb.png")){records.unshift(["提示","zip压缩包缺少缩略图，无法新增thumb.png资源。","请手动命名缩略图为【thumb.png】或补充资源后重新操作流程"]);}
         resultZip=await out.generateAsync({type:"blob"});resultName=`${typeSelect.value}_已整理.zip`;
         document.getElementById("summary").textContent=`道具种类：${typeSelect.value}；以下是文件处理记录。`;
-        const log=document.getElementById("log");log.innerHTML="";records.forEach(r=>{const tr=document.createElement("tr");const missingThumb=r[0]==='提示'&&r[1]==='zip压缩包缺少缩略图，无法新增thumb.png资源。';tr.innerHTML=`<td class="${r[0]==='保留'||r[0]==='生成'?'keep':'remove'}">${r[0]}</td><td class="${missingThumb?'remove':''}">${r[1]}</td><td class="${missingThumb?'remove':''}">${r[2]}</td>`;log.append(tr)});
+        const log=document.getElementById("log");log.innerHTML="";records.forEach(r=>{const tr=document.createElement("tr"),missingThumb=r[0]==='提示'&&r[1]==='zip压缩包缺少缩略图，无法新增thumb.png资源。';r.forEach((value,i)=>{const td=document.createElement('td');td.textContent=value;if(missingThumb)td.className='remove';else if(i===0)td.className=r[0]==='保留'||r[0]==='生成'?'keep':'';tr.append(td);});log.append(tr)});
         document.getElementById("step1").classList.add("hidden");document.getElementById("step2").classList.remove("hidden");
       }catch(e){showError("处理失败："+e.message)}
     };
