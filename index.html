@@ -101,9 +101,17 @@
       if(type.includes('进场特效')){
         const double=type==='双人进场特效',picture=type==='普通图片进场特效';
         if(!picture){await take(['animated','body'],video,'animated',true);const configs=files.filter(f=>base(f).toLowerCase()==='p.json');if(configs.length>1)throw Error('存在多个 p.json，请仅保留配套配置');if(configs[0]){try{JSON.parse(await configs[0].async('string'));}catch{throw Error('p.json 无法解析，请使用交付的原始配置');}await put(configs[0],'p.json');}else records.push(['提示','缺少 p.json','VAP 素材请补充原始配置，不能保证当前比例正确']);}
-        const reserved=f=>!['bottom','thumb','icon','self_frame','peer_frame','other_frame','peer_avatar','avatar'].includes(stem(f));
-        await take(['body','main'],f=>image(f)&&reserved(f),'body',picture);
-        await take(['bottom'],f=>image(f)&&stem(f)==='bottom','bottom');
+        if(!picture){
+          const art=[];for(const f of files.filter(image)){const a=await readImageAsset(f);art.push(a);records.push(['检查',f.name,a.width+'×'+a.height]);}
+          const bottom=chooseAsset(art.filter(a=>['.png','.webp'].includes(a.extension)),['bottom'],[[482,114],[600,100]],false,'进场底板');
+          if(bottom)await put(bottom.file,'bottom'+bottom.extension);
+          const body=chooseAsset(art.filter(a=>!picked.has(a.file)&&!['thumb','icon','self_frame','sender_avatar_frame','peer_frame','other_frame','peer_avatar_frame','peer_avatar','avatar'].includes(a.stem)),['body','main'],[[190,190],[500,500]],false,'进场图片兜底主体');
+          if(body)await put(body.file,'body'+body.extension);
+        }else{
+          const reserved=f=>!['bottom','thumb','icon','self_frame','peer_frame','other_frame','peer_avatar','avatar'].includes(stem(f));
+          await take(['body','main'],f=>image(f)&&reserved(f),'body',true);
+          await take(['bottom'],f=>image(f)&&stem(f)==='bottom','bottom');
+        }
         if(double){await take(['self_frame','sender_avatar_frame'],f=>image(f)&&['self_frame','sender_avatar_frame'].includes(stem(f)),'self_frame');await take(['peer_frame','other_frame','peer_avatar_frame'],f=>image(f)&&['peer_frame','other_frame','peer_avatar_frame'].includes(stem(f)),'peer_frame');await take(['peer_avatar','avatar'],f=>image(f)&&['peer_avatar','avatar'].includes(stem(f)),'peer_avatar');await meta({...original,mode:'double',show_type:'0'});}
         else if(original.show_type==='0'||original.showType==='0')await meta({show_type:'0'});
       }else if(spec.special==='numbered'){
